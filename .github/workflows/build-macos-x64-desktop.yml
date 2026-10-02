@@ -1,0 +1,147 @@
+name: Build t3 desktop for Intel macOS (darwin-x64)
+
+# Upstream pins Electron 44, whose minimum macOS is Ventura (13), so the
+# official Intel .dmg will not launch on Monterey. Electron 43 still supports
+# Monterey (its LSMinimumSystemVersion is 12.0) and is otherwise the same
+# Chromium runtime, so this fork pins Electron 43 and builds a native Intel
+# .dmg that runs on macOS 12.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to stamp (defaults to apps/desktop package version)
+        required: false
+        type: string
+      publish_release:
+        description: Create or update the GitHub Release
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build darwin-x64 desktop DMG
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    env:
+      # No signing identity is available; do not try to auto-discover one.
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      # actions/checkout's credential cleanup runs `submodule foreach` even with
+      # submodules disabled, which fails on the orphaned gitlinks under .repos/.
+      - name: Checkout
+        shell: bash
+        env:
+          CHECKOUT_REF: ${{ github.sha }}
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$CHECKOUT_REF"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git checkout --detach FETCH_HEAD
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Resolve version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ inputs.version }}"
+          if [ -z "$version" ]; then
+            version="$(node -p "require('./apps/desktop/package.json').version")"
+          fi
+          electron="$(node -p "require('./apps/desktop/package.json').dependencies.electron")"
+          echo "T3_VERSION=$version" >> "$GITHUB_ENV"
+          echo "Building desktop ${version} for darwin-x64 (Electron ${electron})"
+
+      # Public (non-secret) T3 Connect identifiers, same as official builds.
+      - name: Bake public T3 Connect configuration
+        run: cp .env.example .env
+
+      - name: Install dependencies
+        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: x86_64-apple-darwin
+
+      # Builds the JS bundle (`vp run build:desktop`), the Rust resource
+      # monitor, then packages the app with electron-builder into release/.
+      - name: Build and package DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/build-desktop-artifact.ts \
+            --platform mac \
+            --target dmg \
+            --arch x64 \
+            --build-version "$T3_VERSION" \
+            --verbose
+
+      # Guard the whole point of this workflow: the app must run on Monterey.
+      - name: Verify minimum macOS
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(find release -maxdepth 4 -name '*.app' -type d | head -1)"
+          if [ -z "$app" ]; then
+            echo "No .app found under release/:"; ls -la release
+            exit 1
+          fi
+          min="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Contents/Info.plist")"
+          echo "$app -> LSMinimumSystemVersion=$min"
+          highest="$(printf '%s\n' "$min" "12.0" | sort -V | tail -1)"
+          if [ "$highest" != "12.0" ]; then
+            echo "ERROR: app requires macOS $min, which is newer than 12.0" >&2
+            exit 1
+          fi
+
+      - name: Collect DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-publish
+          shopt -s nullglob
+          for f in release/*.dmg release/*.dmg.blockmap release/*.zip release/*.zip.blockmap release/*-mac.yml; do
+            cp "$f" release-publish/ 2>/dev/null || true
+          done
+          ls -la release-publish
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: t3-desktop-darwin-x64
+          path: release-publish/*
+          if-no-files-found: error
+
+      - name: Publish release
+        if: ${{ inputs.publish_release != false }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="v${T3_VERSION}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" release-publish/* --clobber
+          else
+            gh release create "$tag" release-publish/* \
+              --title "T3 Code ${T3_VERSION} (Intel macOS)" \
+              --notes "Intel (x64) macOS builds that run on macOS 12 Monterey. The desktop app is pinned to Electron 43 because Electron 44 requires macOS 13.
+
+          The build is unsigned. If Gatekeeper quarantines it, run:
+          xattr -dr com.apple.quarantine '/Applications/T3 Code (Alpha).app'"
+          fi
