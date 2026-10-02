@@ -128,7 +128,8 @@ jobs:
         run: |
           set -euo pipefail
           cd release-cli
-          shasum -a 256 ./*.tar.gz > SHA256SUMS
+          # No `./` prefix: install.sh greps for the bare archive name.
+          shasum -a 256 *.tar.gz > SHA256SUMS
           cat SHA256SUMS
 
       - name: Upload artifact
