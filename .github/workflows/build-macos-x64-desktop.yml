@@ -92,17 +92,29 @@ jobs:
             --verbose
 
       # Guard the whole point of this workflow: the app must run on Monterey.
+      # electron-builder removes its unpacked .app, so read the one inside the
+      # DMG.
       - name: Verify minimum macOS
         shell: bash
         run: |
           set -euo pipefail
-          app="$(find release -maxdepth 4 -name '*.app' -type d | head -1)"
+          shopt -s nullglob
+          dmgs=(release/*.dmg)
+          if [ ${#dmgs[@]} -eq 0 ]; then
+            echo "No DMG found under release/:"; ls -la release
+            exit 1
+          fi
+          mountpoint="$(mktemp -d)"
+          hdiutil attach "${dmgs[0]}" -nobrowse -readonly -mountpoint "$mountpoint" >/dev/null
+          app="$(find "$mountpoint" -maxdepth 1 -name '*.app' -type d | head -1)"
           if [ -z "$app" ]; then
-            echo "No .app found under release/:"; ls -la release
+            echo "No .app inside ${dmgs[0]}"; ls -la "$mountpoint"
+            hdiutil detach "$mountpoint" >/dev/null 2>&1 || true
             exit 1
           fi
           min="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Contents/Info.plist")"
-          echo "$app -> LSMinimumSystemVersion=$min"
+          echo "$(basename "$app") -> LSMinimumSystemVersion=$min"
+          hdiutil detach "$mountpoint" >/dev/null 2>&1 || true
           highest="$(printf '%s\n' "$min" "12.0" | sort -V | tail -1)"
           if [ "$highest" != "12.0" ]; then
             echo "ERROR: app requires macOS $min, which is newer than 12.0" >&2
