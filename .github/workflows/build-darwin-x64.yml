@@ -1,0 +1,167 @@
+name: Build t3 for Intel macOS (darwin-x64)
+
+# Upstream publishes no darwin-x64 CLI archive: Node's single-executable build
+# is unsupported on x64 macOS, and the Node 26 runtime it would embed requires
+# macOS 13.5+. This fork packages the same server bundle with an official
+# Node 24 runtime (which runs on macOS 12 Monterey) behind a launcher script,
+# so Intel Macs that cannot run the Electron 44 desktop app still get `t3`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to stamp the archive with (defaults to apps/server package version)
+        required: false
+        type: string
+      publish_release:
+        description: Create or update the GitHub Release
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  # Node 24 is the newest line whose darwin-x64 binary actually starts on
+  # macOS 12. Node 26 needs macOS 13.5+ and crashes with a missing libc++ symbol.
+  NODE_RUNTIME_VERSION: "24.21.0"
+  RUST_TARGET: x86_64-apple-darwin
+
+jobs:
+  build:
+    name: Build darwin-x64 t3 archive
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    steps:
+      # actions/checkout's credential cleanup runs `submodule foreach` even with
+      # submodules disabled, which fails on the orphaned gitlinks under .repos/.
+      - name: Checkout
+        shell: bash
+        env:
+          CHECKOUT_REF: ${{ github.sha }}
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$CHECKOUT_REF"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git checkout --detach FETCH_HEAD
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Resolve version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ inputs.version }}"
+          if [ -z "$version" ]; then
+            version="$(node -p "require('./apps/server/package.json').version")"
+          fi
+          echo "T3_VERSION=$version" >> "$GITHUB_ENV"
+          echo "Building t3 ${version} for darwin-x64"
+
+      # Public (non-secret) T3 Connect identifiers, same as official builds.
+      - name: Bake public T3 Connect configuration
+        run: cp .env.example .env
+
+      - name: Install dependencies
+        run: vp install --filter=t3... --filter=@t3tools/scripts...
+
+      # Stamp the release version into the releasable package.json files so the
+      # bundle reports it too (the archive name and `t3 --version` must agree).
+      - name: Align package versions
+        run: node scripts/update-release-package-versions.ts "$T3_VERSION"
+
+      # Builds apps/server/dist (bin.mjs, client/, claude-history-worker.mjs).
+      - name: Build server bundle and web client
+        run: vp run --filter t3 build
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: x86_64-apple-darwin
+
+      - name: Build resource monitor
+        run: cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target x86_64-apple-darwin
+
+      - name: Stage resource monitor
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/cli-resource-monitor/darwin-x64"
+          cp "native/resource-monitor/target/${RUST_TARGET}/release/t3-resource-monitor" \
+            "$RUNNER_TEMP/cli-resource-monitor/darwin-x64/t3-resource-monitor"
+
+      - name: Download Node runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://nodejs.org/dist/v${NODE_RUNTIME_VERSION}/node-v${NODE_RUNTIME_VERSION}-darwin-x64.tar.gz"
+          curl -fsSL "$url" -o "$RUNNER_TEMP/node-runtime.tar.gz"
+          mkdir -p "$RUNNER_TEMP/node-runtime"
+          tar -xzf "$RUNNER_TEMP/node-runtime.tar.gz" -C "$RUNNER_TEMP/node-runtime" --strip-components=1
+          "$RUNNER_TEMP/node-runtime/bin/node" --version
+
+      - name: Build self-contained archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/build-cli-archive.ts \
+            --platform mac \
+            --arch x64 \
+            --version "$T3_VERSION" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
+            --node-runtime-dir "$RUNNER_TEMP/node-runtime" \
+            --output-dir release-cli
+
+      # Extracts the archive with PATH="" and runs `t3 --version` and a real
+      # `t3 serve`, so a missing native module or launcher bug fails here.
+      - name: Smoke-test the archive
+        shell: bash
+        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "$T3_VERSION"
+
+      - name: Write checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-cli
+          # No `./` prefix: install.sh greps for the bare archive name.
+          shasum -a 256 *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: t3-darwin-x64
+          path: release-cli/*
+          if-no-files-found: error
+
+      - name: Publish release
+        if: ${{ inputs.publish_release != false }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="v${T3_VERSION}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" release-cli/* --clobber
+          else
+            gh release create "$tag" release-cli/* \
+              --title "T3 Code ${T3_VERSION} (Intel macOS, Node ${NODE_RUNTIME_VERSION})" \
+              --notes "Self-contained \`t3\` server for Intel (x64) macOS. Bundles Node ${NODE_RUNTIME_VERSION} so it runs on macOS 12 Monterey and newer, where the Electron 44 desktop app cannot.
+
+          Install with this fork's installer:
+
+          \`\`\`sh
+          T3CODE_RELEASE_BASE_URL=https://github.com/${GITHUB_REPOSITORY}/releases/download T3CODE_VERSION=${T3_VERSION} sh scripts/install.sh
+          \`\`\`"
+          fi
