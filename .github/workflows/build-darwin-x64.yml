@@ -74,6 +74,11 @@ jobs:
       - name: Install dependencies
         run: vp install --filter=t3... --filter=@t3tools/scripts...
 
+      # Stamp the release version into the releasable package.json files so the
+      # bundle reports it too (the archive name and `t3 --version` must agree).
+      - name: Align package versions
+        run: node scripts/update-release-package-versions.ts "$T3_VERSION"
+
       # Builds apps/server/dist (bin.mjs, client/, claude-history-worker.mjs).
       - name: Build server bundle and web client
         run: vp run --filter t3 build

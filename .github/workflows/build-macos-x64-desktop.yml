@@ -72,6 +72,11 @@ jobs:
       - name: Install dependencies
         run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
 
+      # Stamp the release version into the releasable package.json files so the
+      # app, updater manifest, and `t3 --version` all agree.
+      - name: Align package versions
+        run: node scripts/update-release-package-versions.ts "$T3_VERSION"
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:

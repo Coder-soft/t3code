@@ -5,7 +5,10 @@
  * platform key, so a rename here is a release-breaking change.
  */
 
-const CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
+// Fork note: upstream publishes no darwin-x64 CLI archive, so this fork is the
+// only source for it. Version resolution and downloads must both come from here
+// or `t3 update` / the server self-update would consult upstream and 404.
+const CLI_RELEASE_REPOSITORY = "Coder-soft/t3code";
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 /** Overrides the download origin for mirrors and air-gapped installs. */
 export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
@@ -17,10 +20,12 @@ export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
  * download URLs that 404, and a build there without a key here is
  * unreachable from every installer.
  */
-// No darwin-x64: Node single-executables are unsupported on x64 macOS (the
-// SEA docs list macOS as arm64 only) and the binary segfaults on start.
+// This fork adds darwin-x64. Node single-executables are unsupported on x64
+// macOS (the SEA docs list macOS as arm64 only), so the fork's archive bundles
+// an official Node runtime behind a launcher instead of using SEA.
 export const CLI_ARCHIVE_PLATFORM_KEYS = [
   "darwin-arm64",
+  "darwin-x64",
   "linux-arm64",
   "linux-x64",
   "win32-arm64",

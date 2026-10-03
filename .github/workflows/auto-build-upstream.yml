@@ -1,0 +1,121 @@
+name: Auto-build upstream releases for Intel macOS
+
+# Tracks upstream's stable releases. For each stable version this fork has not
+# published yet, it creates `sync/<tag>` from the upstream release commit with
+# this fork's customizations merged on top, pushes that branch, and dispatches
+# the two Intel (x64) build workflows against it.
+#
+# Nightlies and previews are upstream prereleases and are intentionally skipped.
+# If the merge conflicts (upstream edited a file this fork customizes), the job
+# fails without pushing; sync it by hand before the next release.
+
+on:
+  schedule:
+    # Every six hours, away from the busiest scheduled slots.
+    - cron: "23 1,7,13,19 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Upstream stable version to build (for example 0.0.45). Defaults to the newest upstream stable release this fork has not built."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: auto-build-upstream
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Pick upstream version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+      tag: ${{ steps.pick.outputs.tag }}
+      needed: ${{ steps.pick.outputs.needed }}
+    steps:
+      - name: Resolve version
+        id: pick
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${INPUT_VERSION:-}" ]]; then
+            version="${INPUT_VERSION#v}"
+          else
+            version="$(gh api 'repos/pingdotgg/t3code/releases?per_page=50' \
+              --jq '[.[] | select(.prerelease == false)][0].tag_name' | sed 's/^v//')"
+          fi
+          if [[ -z "$version" || "$version" == "null" ]]; then
+            echo "No upstream stable release found." >&2
+            exit 1
+          fi
+          tag="v${version}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            needed=false
+            echo "This fork already has ${tag}; nothing to build."
+          else
+            needed=true
+            echo "This fork is missing ${tag}; it will be built."
+          fi
+          {
+            echo "version=${version}"
+            echo "tag=${tag}"
+            echo "needed=${needed}"
+          } >> "$GITHUB_OUTPUT"
+
+  sync:
+    name: Sync ${{ needs.plan.outputs.tag }} and dispatch builds
+    needs: plan
+    if: needs.plan.outputs.needed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+    steps:
+      # actions/checkout's credential cleanup runs `submodule foreach` even with
+      # submodules disabled, which fails on the orphaned gitlinks under .repos/.
+      - name: Create sync branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git remote add upstream "https://github.com/pingdotgg/t3code.git"
+          # Full history is needed for a real merge base; the fork's main already
+          # carries upstream history up to its base, so this is not a full clone
+          # of either repository.
+          git fetch --no-tags origin main
+          git fetch --no-tags upstream "refs/tags/${TAG}:refs/tags/${TAG}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "sync/${TAG}" "refs/tags/${TAG}"
+          if ! git merge --no-edit origin/main; then
+            echo "::error::Merging this fork's main into ${TAG} conflicted. Resolve upstream's changes to the fork-customized files (scripts/build-cli-archive.ts, scripts/install.sh, apps/desktop/package.json, pnpm-lock.yaml, packages/shared/src/cliRelease.ts) by hand, then re-run this workflow."
+            git --no-pager diff --name-only --diff-filter=U
+            exit 1
+          fi
+          # Local branches would be the merge target, not a conflict marker; a
+          # failed merge above already exited.
+          git push --force origin "sync/${TAG}"
+
+      - name: Dispatch Intel builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          for workflow in build-darwin-x64.yml build-macos-x64-desktop.yml; do
+            gh workflow run "$workflow" \
+              --repo "$GITHUB_REPOSITORY" \
+              --ref "sync/${TAG}" \
+              -f "version=${VERSION}" \
+              -f "publish_release=true"
+            echo "Dispatched ${workflow} on sync/${TAG} for ${VERSION}."
+          done
