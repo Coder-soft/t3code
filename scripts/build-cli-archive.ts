@@ -456,18 +456,40 @@ const signWindowsExecutable = Effect.fn("signWindowsExecutable")(function* (
   yield* Effect.log("[cli-archive] Signed t3.exe (Azure Trusted Signing).");
 });
 
+/**
+ * POSIX launcher used when the archive carries a Node runtime instead of a
+ * Node single-executable (the x64 macOS case, where SEA is unavailable). It
+ * resolves its own real path first so the installer's symlink in
+ * `~/.local/bin` reaches the extracted tree, then execs the bundled Node on
+ * the server bundle sitting beside it.
+ */
+const bundledNodeLauncher = `#!/bin/sh
+target="$0"
+while [ -L "$target" ]; do
+  link="$(/usr/bin/readlink "$target")"
+  case "$link" in
+    /*) target="$link" ;;
+    *) target="$(/usr/bin/dirname "$target")/$link" ;;
+  esac
+done
+here="$(CDPATH= cd -- "$(/usr/bin/dirname -- "$target")" && pwd)"
+exec "$here/node-runtime/bin/node" "$here/bin.mjs" "$@"
+`;
+
 const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   readonly platform: BuildPlatform;
   readonly arch: BuildArch;
   readonly version: string;
   readonly outputDir: string;
   readonly resourceMonitorDir: Option.Option<string>;
+  readonly nodeRuntimeDir: Option.Option<string>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const repoRoot = yield* RepoRoot;
   const serverDir = path.join(repoRoot, "apps/server");
   const executableName = input.platform === "win" ? "t3.exe" : "t3";
+  const nodeRuntimeDir = Option.getOrUndefined(input.nodeRuntimeDir);
   // tsdown suffixes cross-built executables with their target (t3-darwin-x64);
   // a host build is plain t3. Prefer the exact target when both exist.
   const targetKey = `${input.platform === "mac" ? "darwin" : input.platform}-${input.arch}`;
@@ -490,10 +512,21 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
     path.join(serverDir, "dist/resource-monitor"),
   );
 
-  yield* requireInput(
-    builtExecutable,
-    `Run \`node apps/server/scripts/cli.ts build-exe --target ${targetKey}\` first.`,
-  );
+  if (nodeRuntimeDir === undefined) {
+    yield* requireInput(
+      builtExecutable,
+      `Run \`node apps/server/scripts/cli.ts build-exe --target ${targetKey}\` first.`,
+    );
+  } else {
+    yield* requireInput(
+      path.join(serverDir, "dist/bin.mjs"),
+      "Run `vp run --filter t3 build` first.",
+    );
+    yield* requireInput(
+      path.join(nodeRuntimeDir, "bin/node"),
+      "Pass an extracted nodejs.org darwin distribution containing bin/node.",
+    );
+  }
   yield* requireInput(path.join(webClient, "index.html"), "Run `vp run --filter t3 build` first.");
   yield* requireInput(
     resourceMonitorDir,
@@ -506,7 +539,24 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   yield* fs.makeDirectory(contentDir, { recursive: true });
 
   yield* Effect.log(`[cli-archive] Staging ${stem}...`);
-  yield* fs.copyFile(builtExecutable, path.join(contentDir, executableName));
+  if (nodeRuntimeDir === undefined) {
+    yield* fs.copyFile(builtExecutable, path.join(contentDir, executableName));
+  } else {
+    // Server bundle at the archive root, exactly where the single-executable
+    // sits, so `import.meta.dirname` resolves client/, resource-monitor/ and
+    // claude-history-worker.mjs the same way. Sourcemaps are dead weight.
+    const serverDist = path.join(serverDir, "dist");
+    for (const entry of yield* fs.readDirectory(serverDist)) {
+      if (entry === "client" || entry === "resource-monitor" || entry.endsWith(".map")) continue;
+      yield* fs.copy(path.join(serverDist, entry), path.join(contentDir, entry));
+    }
+    yield* fs.makeDirectory(path.join(contentDir, "node-runtime/bin"), { recursive: true });
+    yield* fs.copyFile(path.join(nodeRuntimeDir, "bin/node"), path.join(contentDir, "node-runtime/bin/node"));
+    yield* fs.chmod(path.join(contentDir, "node-runtime/bin/node"), 0o755);
+    yield* fs.writeFileString(path.join(contentDir, executableName), bundledNodeLauncher);
+    yield* fs.chmod(path.join(contentDir, executableName), 0o755);
+    yield* Effect.log("[cli-archive] Bundled the Node runtime; t3 is a launcher script.");
+  }
   yield* stageWebClient(webClient, path.join(contentDir, "client"));
   yield* fs.copy(resourceMonitorDir, path.join(contentDir, "resource-monitor"));
   yield* stageRuntimeExternals({
@@ -517,7 +567,10 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
     version: input.version,
   });
 
-  const executablePath = path.join(contentDir, executableName);
+  const executablePath =
+    nodeRuntimeDir === undefined
+      ? path.join(contentDir, executableName)
+      : path.join(contentDir, "node-runtime/bin/node");
   if (input.platform === "mac") {
     yield* signMacArchiveContents({ repoRoot, contentDir, executablePath });
   } else if (input.platform === "win") {
@@ -576,6 +629,12 @@ const command = Command.make(
     resourceMonitorDir: Flag.String("resource-monitor-dir").pipe(
       Flag.withDescription(
         "Directory laid out like dist/resource-monitor (defaults to apps/server/dist/resource-monitor).",
+      ),
+      Flag.optional,
+    ),
+    nodeRuntimeDir: Flag.String("node-runtime-dir").pipe(
+      Flag.withDescription(
+        "Package a Node-bundled archive from apps/server/dist using this extracted nodejs.org distribution (must contain bin/node) instead of a Node single-executable.",
       ),
       Flag.optional,
     ),
