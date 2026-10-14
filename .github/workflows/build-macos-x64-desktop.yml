@@ -53,6 +53,16 @@ jobs:
           cache: true
           run-install: false
 
+      # Electron 43 is the newest line that runs on macOS 12 Monterey; upstream
+      # tracks a newer Electron that requires macOS 13. Pin it in CI rather than
+      # in package.json so upstream's dependency bumps and lockfile merge cleanly.
+      - name: Pin Electron 43 for macOS 12
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e 'const fs=require("fs");const p="apps/desktop/package.json";const j=JSON.parse(fs.readFileSync(p,"utf8"));j.dependencies.electron="43.7.7";fs.writeFileSync(p,JSON.stringify(j,null,2)+"\n")'
+          node -p "require('./apps/desktop/package.json').dependencies.electron"
+
       - name: Resolve version
         shell: bash
         run: |
@@ -70,7 +80,11 @@ jobs:
         run: cp .env.example .env
 
       - name: Install dependencies
-        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+        run: |
+          set -euo pipefail
+          # Regenerate the lockfile for the CI-pinned Electron, then install.
+          vp install --lockfile-only --ignore-scripts
+          vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
 
       # Stamp the release version into the releasable package.json files so the
       # app, updater manifest, and `t3 --version` all agree.
