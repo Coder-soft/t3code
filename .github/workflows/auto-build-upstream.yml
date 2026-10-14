@@ -105,13 +105,12 @@ jobs:
             git --no-pager diff --name-only --diff-filter=U
             exit 1
           fi
-          # GITHUB_TOKEN cannot modify workflow files that already exist on the
-          # remote. Restore every workflow the upstream tag already has to the
-          # tag's copy, so this merge only adds this fork's own workflows
-          # (additions are allowed) and never updates upstream's.
-          while IFS= read -r workflow; do
-            git checkout "refs/tags/${TAG}" -- "$workflow"
-          done < <(git ls-tree -r --name-only "refs/tags/${TAG}" -- .github/workflows)
+          # GITHUB_TOKEN may not create or update workflow files. Make the sync
+          # branch carry the default branch's workflow files verbatim; upstream's
+          # workflow edits are not needed to build this fork.
+          rm -rf .github/workflows
+          git checkout origin/main -- .github/workflows
+          git add -A .github/workflows
           git commit --amend --no-edit
           # Local branches would be the merge target, not a conflict marker; a
           # failed merge above already exited.
