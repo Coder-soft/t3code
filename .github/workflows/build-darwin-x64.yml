@@ -152,10 +152,14 @@ jobs:
         run: |
           set -euo pipefail
           tag="v${T3_VERSION}"
+          # A nightly must never become the repository's "latest" release, or
+          # the fork's stable installer/updater would start offering it.
+          prerelease=""
+          case "$T3_VERSION" in *-nightly.*) prerelease="--prerelease" ;; esac
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" release-cli/* --clobber
           else
-            gh release create "$tag" release-cli/* \
+            gh release create "$tag" release-cli/* $prerelease \
               --title "T3 Code ${T3_VERSION} (Intel macOS, Node ${NODE_RUNTIME_VERSION})" \
               --notes "Self-contained \`t3\` server for Intel (x64) macOS. Bundles Node ${NODE_RUNTIME_VERSION} so it runs on macOS 12 Monterey and newer, where the Electron 44 desktop app cannot.
 
@@ -164,4 +168,7 @@ jobs:
           \`\`\`sh
           T3CODE_RELEASE_BASE_URL=https://github.com/${GITHUB_REPOSITORY}/releases/download T3CODE_VERSION=${T3_VERSION} sh scripts/install.sh
           \`\`\`"
+          fi
+          if [ -n "$prerelease" ]; then
+            gh release edit "$tag" --prerelease
           fi
