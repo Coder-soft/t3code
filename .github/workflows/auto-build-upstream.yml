@@ -101,9 +101,26 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "sync/${TAG}" "refs/tags/${TAG}"
           if ! git merge --no-edit origin/main; then
-            echo "::error::Merging this fork's main into ${TAG} conflicted. Resolve upstream's changes to the fork-customized files (scripts/build-cli-archive.ts, scripts/install.sh, apps/desktop/package.json, pnpm-lock.yaml, packages/shared/src/cliRelease.ts) by hand, then re-run this workflow."
-            git --no-pager diff --name-only --diff-filter=U
-            exit 1
+            # Upstream owns packages/shared/src/cliRelease.ts and its test; the
+            # fork only needs two small edits on top. Re-apply them on upstream's
+            # copy rather than hand-merging, so upstream refactors of that file
+            # never block a release. Any other conflict still fails below.
+            git checkout "refs/tags/${TAG}" -- \
+              packages/shared/src/cliRelease.ts \
+              packages/shared/src/cliRelease.test.ts
+            sed -i 's#const CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";#const CLI_RELEASE_REPOSITORY = "Coder-soft/t3code";#' packages/shared/src/cliRelease.ts
+            sed -i 's#^  "darwin-arm64",#  "darwin-arm64",\n  "darwin-x64",#' packages/shared/src/cliRelease.ts
+            sed -i 's#pingdotgg/t3code#Coder-soft/t3code#g' packages/shared/src/cliRelease.test.ts
+            sed -i 's#expect(cliArchivePlatformKey("darwin", "x64")).toBeUndefined();#expect(cliArchivePlatformKey("darwin", "x64")).toBe("darwin-x64");#' packages/shared/src/cliRelease.test.ts
+            git add \
+              packages/shared/src/cliRelease.ts \
+              packages/shared/src/cliRelease.test.ts
+            if git ls-files -u | grep -q .; then
+              echo "::error::Merge conflicts remain outside the auto-resolved cliRelease files. Resolve them by hand, then re-run this workflow."
+              git --no-pager diff --name-only --diff-filter=U
+              exit 1
+            fi
+            git commit --no-edit
           fi
           # GITHUB_TOKEN may not create or update workflow files. Make the sync
           # branch carry the default branch's workflow files verbatim; upstream's
