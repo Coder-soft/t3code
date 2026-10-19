@@ -19,6 +19,11 @@ on:
         description: "Upstream stable version to build (for example 0.0.45). Defaults to the newest upstream stable release this fork has not built."
         required: false
         type: string
+      force:
+        description: "Rebuild and republish even if the fork already has this release (for example after a fix, to fill in a missing artifact)."
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -44,6 +49,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_VERSION: ${{ inputs.version }}
+          INPUT_FORCE: ${{ inputs.force }}
         run: |
           set -euo pipefail
           if [[ -n "${INPUT_VERSION:-}" ]]; then
@@ -59,7 +65,10 @@ jobs:
             exit 1
           fi
           tag="v${version}"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          if [[ "${INPUT_FORCE:-}" == "true" ]]; then
+            needed=true
+            echo "Force rebuild requested; ignoring any existing release for ${tag}."
+          elif gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             needed=false
             echo "This fork already has ${tag}; nothing to build."
           else
