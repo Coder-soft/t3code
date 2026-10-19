@@ -80,6 +80,10 @@ jobs:
         run: cp .env.example .env
 
       - name: Install dependencies
+        env:
+          # pnpm resolving the whole workspace can exceed Node's ~2 GB default
+          # old-space limit; raise it (the runner has far more RAM than that).
+          NODE_OPTIONS: --max-old-space-size=6144
         run: |
           set -euo pipefail
           # Regenerate the lockfile for the CI-pinned Electron, then install.
