@@ -1,4 +1,4 @@
-const CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
+const CLI_RELEASE_REPOSITORY = "Coder-soft/t3code";
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
 
@@ -12,6 +12,7 @@ export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
 // SEA docs list macOS as arm64 only) and the binary segfaults on start.
 const CLI_ARCHIVE_PLATFORM_KEYS = [
   "darwin-arm64",
+  "darwin-x64",
   "linux-arm64",
   "linux-x64",
   "win32-arm64",

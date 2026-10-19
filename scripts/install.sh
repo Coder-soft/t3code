@@ -17,7 +17,9 @@
 # instead of fetching the release again.
 set -eu
 
-repo="pingdotgg/t3code"
+# Forked installer: this fork publishes the darwin-x64 build this machine can
+# actually run. Override T3CODE_REPO to point at upstream or another fork.
+repo="${T3CODE_REPO:-Coder-soft/t3code}"
 base_url="${T3CODE_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
 t3_home="${T3CODE_HOME:-$HOME/.t3}"
 bin_dir="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}"
