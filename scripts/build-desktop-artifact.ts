@@ -2657,9 +2657,17 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // Smart unpack extracts entire native packages, including JavaScript and
     // metadata. Windows keeps those files archived so native dependencies do
     // not inflate the loose-file count and slow NSIS installation.
-    ...(platform === "win"
-      ? { asar: { smartUnpack: false }, asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB] }
-      : {}),
+    //
+    // macOS additionally unpacks the web client. Electron 43's ASAR shim
+    // answers `lstat(path, { bigint: true })` with plain Stats (no `mtimeNs`),
+    // which Effect's FileSystem.stat rejects, so the desktop protocol 404s
+    // every browser asset and the splash never boots. Real files keep the
+    // BigIntStats contract intact.
+    ...(platform === "mac"
+      ? { asarUnpack: ["apps/server/dist/client/**"] }
+      : platform === "win"
+        ? { asar: { smartUnpack: false }, asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB] }
+        : {}),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
