@@ -68,12 +68,19 @@ jobs:
           if [[ "${INPUT_FORCE:-}" == "true" ]]; then
             needed=true
             echo "Force rebuild requested; ignoring any existing release for ${tag}."
-          elif gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            needed=false
-            echo "This fork already has ${tag}; nothing to build."
           else
-            needed=true
-            echo "This fork is missing ${tag}; it will be built."
+            # A release can exist with only one artifact (for example when the
+            # desktop job OOMs after the CLI job published). Require both.
+            assets="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+            cli_asset="t3-${version}-darwin-x64.tar.gz"
+            dmg_asset="T3-Code-${version}-x64.dmg"
+            if grep -qxF "$cli_asset" <<< "$assets" && grep -qxF "$dmg_asset" <<< "$assets"; then
+              needed=false
+              echo "This fork already has both artifacts for ${tag}; nothing to build."
+            else
+              needed=true
+              echo "This fork is missing an artifact for ${tag} (CLI=${cli_asset}, DMG=${dmg_asset}); it will be built."
+            fi
           fi
           {
             echo "version=${version}"
