@@ -141,6 +141,20 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
+  it.effect("serves the packaged macOS client from the asar-unpacked sibling", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({
+        platform: "darwin",
+        isPackaged: true,
+      });
+
+      assert.equal(
+        environment.clientAssetsDir,
+        "/Applications/T3 Code.app/Contents/Resources/app.asar.unpacked/apps/server/dist/client",
+      );
+    }),
+  );
+
   it.effect("uses the stable desktop entry as the packaged Linux portal identity", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment({
