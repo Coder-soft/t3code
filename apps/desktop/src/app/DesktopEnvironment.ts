@@ -220,7 +220,14 @@ const make = Effect.fn("desktop.environment.make")(function* (
     appRoot,
     serverRoot,
     backendEntryPath: path.join(serverRoot, "apps/server/dist/bin.mjs"),
-    clientAssetsDir: path.join(serverRoot, "apps/server/dist/client"),
+    // Electron 43's ASAR shim answers bigint lstat with plain Stats (no
+    // `mtimeNs`), so Effect's FileSystem.stat fails on anything inside
+    // app.asar. macOS packages the web client as real files in the archive's
+    // `.unpacked` sibling (see asarUnpack in scripts/build-desktop-artifact.ts).
+    clientAssetsDir:
+      input.isPackaged && input.platform === "darwin" && serverRoot.endsWith(".asar")
+        ? path.join(`${serverRoot}.unpacked`, "apps/server/dist/client")
+        : path.join(serverRoot, "apps/server/dist/client"),
     backendCwd: input.isPackaged ? homeDirectory : appRoot,
     preloadPath: path.join(input.dirname, "preload.cjs"),
     compileCachePath: path.join(input.dirname, "compileCache.cjs"),
