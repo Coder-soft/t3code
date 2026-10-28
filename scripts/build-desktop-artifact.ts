@@ -2787,9 +2787,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       buildResources: "apps/desktop/resources",
     },
     // Disable smart unpack so native packages' JS/metadata stay archived and avoid slowing NSIS with loose files.
-    ...(platform === "win"
-      ? { asar: { smartUnpack: false }, asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB] }
-      : {}),
+    // macOS also unpacks the web client: Electron 43's ASAR shim answers bigint
+    // lstat with plain Stats, so Effect's FileSystem.stat cannot serve assets
+    // from inside app.asar. See clientAssetsDir in DesktopEnvironment.ts.
+    ...(platform === "mac"
+      ? { asarUnpack: ["apps/server/dist/client/**"] }
+      : platform === "win"
+        ? { asar: { smartUnpack: false }, asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB] }
+        : {}),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
