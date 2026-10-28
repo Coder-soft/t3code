@@ -132,10 +132,18 @@ jobs:
             sed -i 's#^  "darwin-arm64",#  "darwin-arm64",\n  "darwin-x64",#' packages/shared/src/cliRelease.ts
             sed -i 's#pingdotgg/t3code#Coder-soft/t3code#g' packages/shared/src/cliRelease.test.ts
             sed -i 's#expect(cliArchivePlatformKey("darwin", "x64")).toBeUndefined();#expect(cliArchivePlatformKey("darwin", "x64")).toBe("darwin-x64");#' packages/shared/src/cliRelease.test.ts
+            # The two build scripts carry the fork's Intel changes. Their
+            # copies on main are rebased onto the matching upstream tag, so
+            # keep those instead of merging the fork's old base.
+            git checkout origin/main -- \
+              scripts/build-cli-archive.ts \
+              scripts/build-desktop-artifact.ts
             git add \
               packages/shared/src/cliRelease.ts \
               packages/shared/src/cliRelease.test.ts \
-              apps/desktop/src/app/DesktopEnvironment.test.ts
+              apps/desktop/src/app/DesktopEnvironment.test.ts \
+              scripts/build-cli-archive.ts \
+              scripts/build-desktop-artifact.ts
             if git ls-files -u | grep -q .; then
               echo "::error::Merge conflicts remain outside the auto-resolved cliRelease and desktop environment test files. Resolve them by hand, then re-run this workflow."
               git --no-pager diff --name-only --diff-filter=U
