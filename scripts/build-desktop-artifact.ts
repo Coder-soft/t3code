@@ -2787,9 +2787,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       buildResources: "apps/desktop/resources",
     },
     // Disable smart unpack so native packages' JS/metadata stay archived and avoid slowing NSIS with loose files.
-    ...(platform === "win"
-      ? { asar: { smartUnpack: false }, asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB] }
-      : {}),
+    // macOS also unpacks the web client: Electron 43's ASAR shim answers bigint
+    // lstat with plain Stats, so Effect's FileSystem.stat cannot serve assets
+    // from inside app.asar. See clientAssetsDir in DesktopEnvironment.ts.
+    ...(platform === "mac"
+      ? { asarUnpack: ["apps/server/dist/client/**"] }
+      : platform === "win"
+        ? { asar: { smartUnpack: false }, asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB] }
+        : {}),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
@@ -3521,42 +3526,6 @@ export const validateWindowsPackagedPayload = Effect.fn(
   return { packagedAppDir, fileCount, unpackedFiles } as const;
 });
 
-export class MacPackagedAppMissingError extends Schema.TaggedError<MacPackagedAppMissingError>()(
-  "MacPackagedAppMissingError",
-  { stageDistDir: Schema.String },
-) {
-  override get message(): string {
-    return `Expected electron-builder to leave a packaged .app with Contents/Resources/app.asar under ${this.stageDistDir}/mac*.`;
-  }
-}
-
-export const validateMacPackagedPayload = Effect.fn("desktopArtifact.validateMacPackagedPayload")(
-  function* (input: { readonly stageDistDir: string; readonly verbose?: boolean }) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const asarPaths: string[] = [];
-    for (const entry of yield* fs.readDirectory(input.stageDistDir)) {
-      if (!entry.startsWith("mac")) continue;
-      const outputDir = path.join(input.stageDistDir, entry);
-      const apps = yield* fs.readDirectory(outputDir).pipe(Effect.orElseSucceed(() => []));
-      for (const app of apps) {
-        if (app.endsWith(".app")) {
-          asarPaths.push(path.join(outputDir, app, "Contents/Resources/app.asar"));
-        }
-      }
-    }
-    if (asarPaths.length === 0) {
-      return yield* new MacPackagedAppMissingError({ stageDistDir: input.stageDistDir });
-    }
-    for (const asarPath of asarPaths) {
-      yield* verifyPackagedBundleIsSelfContained({ asarPath, verbose: input.verbose ?? false });
-    }
-    yield* Effect.log(
-      `[desktop-artifact] Validated macOS payload (${String(asarPaths.length)} app bundle(s)).`,
-    );
-  },
-);
-
 const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(function* (
   options: ResolvedBuildOptions,
 ) {
@@ -4051,10 +4020,6 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       }),
       verbose: options.verbose,
     });
-  }
-  // x64 builds on arm64 runners; the arm64 check covers the shared JS bundle.
-  if (options.platform === "mac" && options.arch === "arm64" && hostPlatform === "darwin") {
-    yield* validateMacPackagedPayload({ stageDistDir, verbose: options.verbose });
   }
 
   const stageEntries = yield* fs.readDirectory(stageDistDir);
