@@ -413,6 +413,9 @@ const signWindowsExecutable = Effect.fn("signWindowsExecutable")(function* (
  * on the server bundle beside it.
  */
 const bundledNodeLauncher = `#!/bin/sh
+# Keep the invoked path (usually the ~/.local/bin symlink) so t3 update can
+# repoint it. $target is rewritten below while resolving symlinks.
+launcher="$0"
 target="$0"
 while [ -L "$target" ]; do
   link="$(/usr/bin/readlink "$target")"
@@ -422,6 +425,7 @@ while [ -L "$target" ]; do
   esac
 done
 here="$(CDPATH= cd -- "$(/usr/bin/dirname -- "$target")" && pwd)"
+export T3CODE_LAUNCHER_PATH="$launcher"
 exec "$here/node-runtime/bin/node" "$here/bin.mjs" "$@"
 `;
 

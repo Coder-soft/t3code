@@ -87,7 +87,10 @@ const planUninstall = Effect.fn("cli.uninstall.plan")(function* (input: {
     path.resolve(status.installedBaseDir) === path.resolve(input.baseDir);
   const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
   const runtimeDir = path.dirname(versionsDir);
-  const launchedAs = (yield* HostProcessIsExecutable) ? yield* resolveLauncherPath : undefined;
+  const environment = yield* HostProcessEnvironment;
+  const launchedAs = (yield* HostProcessIsExecutable)
+    ? yield* resolveLauncherPath
+    : environment["T3CODE_LAUNCHER_PATH"]?.trim() || undefined;
   const plan: UninstallPlan = {
     service: status.supported && status.installed && servesThisHome,
     launcher: yield* findOwnedLauncher({ launchedAs, versionsDir }),

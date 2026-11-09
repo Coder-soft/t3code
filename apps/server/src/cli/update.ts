@@ -536,7 +536,13 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     ),
   );
 
-  const launchedAs = (yield* HostProcessIsExecutable) ? yield* resolveLauncherPath : undefined;
+  // The portable (Node-bundled) build runs `node bin.mjs`, not a Node
+  // single-executable, so it cannot discover its launcher from argv[0]. Its
+  // launcher exports the path it was invoked as instead, so the symlink can
+  // still be repointed after an update.
+  const launchedAs = (yield* HostProcessIsExecutable)
+    ? yield* resolveLauncherPath
+    : environment["T3CODE_LAUNCHER_PATH"]?.trim() || undefined;
   const repointed = yield* repointLauncher({
     launchedAs,
     versionsDir: path.dirname(runtime.versionDir),
