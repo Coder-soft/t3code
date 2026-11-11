@@ -123,11 +123,15 @@ jobs:
             # never block a release. Upstream also rewrites the desktop
             # environment test, where the fork's extra macOS assertion only
             # documents the clientAssetsDir fix; keep upstream's copy on sync
-            # branches. Any other conflict still fails below.
+            # branches. The fork's launcher-repoint fix is local-only for now, so
+            # take upstream's update.ts/uninstall.ts too. Any other conflict
+            # still fails below.
             git checkout "refs/tags/${TAG}" -- \
               packages/shared/src/cliRelease.ts \
               packages/shared/src/cliRelease.test.ts \
-              apps/desktop/src/app/DesktopEnvironment.test.ts
+              apps/desktop/src/app/DesktopEnvironment.test.ts \
+              apps/server/src/cli/update.ts \
+              apps/server/src/cli/uninstall.ts
             sed -i 's#const CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";#const CLI_RELEASE_REPOSITORY = "Coder-soft/t3code";#' packages/shared/src/cliRelease.ts
             sed -i 's#^  "darwin-arm64",#  "darwin-arm64",\n  "darwin-x64",#' packages/shared/src/cliRelease.ts
             sed -i 's#pingdotgg/t3code#Coder-soft/t3code#g' packages/shared/src/cliRelease.test.ts
@@ -142,6 +146,8 @@ jobs:
               packages/shared/src/cliRelease.ts \
               packages/shared/src/cliRelease.test.ts \
               apps/desktop/src/app/DesktopEnvironment.test.ts \
+              apps/server/src/cli/update.ts \
+              apps/server/src/cli/uninstall.ts \
               scripts/build-cli-archive.ts \
               scripts/build-desktop-artifact.ts
             if git ls-files -u | grep -q .; then
